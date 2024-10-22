@@ -1,0 +1,14 @@
+
+### Conteúdo do .gitignore
+```gitignore
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+
+# Editor
+.vscode/
+.idea/
+*.log
