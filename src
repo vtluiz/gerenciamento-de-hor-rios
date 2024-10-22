@@ -1,0 +1,252 @@
+import sqlite3
+import tkinter as tk
+from tkinter import messagebox, ttk
+from tkinter import Menu
+from tkinter import simpledialog  # Importando simpledialog corretamente
+
+# ==================== FUNÇÕES AUXILIARES ====================
+
+# Conexão ao banco de dados
+def abrir_conexao():
+    return sqlite3.connect('escola.db')
+
+def fechar_conexao(conn):
+    conn.commit()
+    conn.close()
+
+# ==================== CONFIGURAÇÃO DO BANCO ====================
+
+# Criar o banco de dados e tabelas
+def criar_banco():
+    conn = abrir_conexao()
+    cursor = conn.cursor()
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS professores (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        nome TEXT NOT NULL,
+                        aulas_por_dia INTEGER,
+                        aulas_por_semana INTEGER)''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS turmas (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ano INTEGER,
+                        serie TEXT)''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS disciplinas (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        nome TEXT NOT NULL,
+                        id_professor INTEGER,
+                        id_turma INTEGER,
+                        FOREIGN KEY(id_professor) REFERENCES professores(id),
+                        FOREIGN KEY(id_turma) REFERENCES turmas(id))''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS horarios (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        id_professor INTEGER,
+                        dia_semana TEXT,
+                        horario TEXT,
+                        FOREIGN KEY(id_professor) REFERENCES professores(id))''')
+
+    fechar_conexao(conn)
+
+# ==================== FUNÇÕES CRUD ====================
+
+# Função genérica para adicionar dados ao banco
+def adicionar_dados(tabela, colunas, valores):
+    conn = abrir_conexao()
+    cursor = conn.cursor()
+    query = f'INSERT INTO {tabela} ({", ".join(colunas)}) VALUES ({", ".join(["?" for _ in valores])})'
+    cursor.execute(query, valores)
+    fechar_conexao(conn)
+    messagebox.showinfo("Sucesso", f"Dados adicionados na tabela {tabela} com sucesso!")
+
+# Função para obter dados de uma tabela
+def obter_dados(tabela):
+    conn = abrir_conexao()
+    cursor = conn.cursor()
+    cursor.execute(f'SELECT * FROM {tabela}')
+    dados = cursor.fetchall()
+    fechar_conexao(conn)
+    return dados
+
+# Função para excluir um professor
+def excluir_professor(id_professor):
+    conn = abrir_conexao()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM professores WHERE id = ?', (id_professor,))
+    cursor.execute('DELETE FROM disciplinas WHERE id_professor = ?', (id_professor,))
+    cursor.execute('DELETE FROM horarios WHERE id_professor = ?', (id_professor,))
+    fechar_conexao(conn)
+    messagebox.showinfo("Sucesso", "Professor excluído com sucesso!")
+
+# ==================== VERIFICAÇÃO DE CONFLITOS ====================
+
+# Função para verificar conflitos de horários
+def verificar_conflito(id_professor, dia_semana, horario):
+    conn = abrir_conexao()
+    cursor = conn.cursor()
+    cursor.execute('''SELECT * FROM horarios 
+                      WHERE id_professor = ? AND dia_semana = ? AND horario = ?''', 
+                   (id_professor, dia_semana, horario))
+    conflito = cursor.fetchall()
+    fechar_conexao(conn)
+    return len(conflito) > 0  # Retorna True se houver conflito
+
+# ==================== INTERFACE DE ADIÇÃO DE DADOS ====================
+
+# Função para adicionar horários
+def adicionar_horario_interface():
+    janela_horario = tk.Toplevel()
+    janela_horario.title("Adicionar Horário")
+
+    tk.Label(janela_horario, text="Professor").pack()
+    professores = obter_dados("professores")
+    combo_professores = ttk.Combobox(janela_horario, values=[f"{prof[1]} (ID {prof[0]})" for prof in professores])
+    combo_professores.pack()
+
+    tk.Label(janela_horario, text="Dia da Semana").pack()
+    dia_semana = tk.Entry(janela_horario)
+    dia_semana.pack()
+
+    tk.Label(janela_horario, text="Horário").pack()
+    horario = tk.Entry(janela_horario)
+    horario.pack()
+
+    tk.Button(janela_horario, text="Adicionar", command=lambda: adicionar_horario(combo_professores.get(), dia_semana.get(), horario.get())).pack()
+
+def adicionar_horario(professor, dia_semana, horario):
+    id_professor = int(professor.split("ID ")[-1][:-1])
+    if verificar_conflito(id_professor, dia_semana, horario):
+        messagebox.showerror("Erro", "Conflito de horário! O professor já possui um horário agendado para este dia e horário.")
+        return
+    adicionar_dados("horarios", ["id_professor", "dia_semana", "horario"], [id_professor, dia_semana, horario])
+    messagebox.showinfo("Sucesso", "Horário adicionado com sucesso!")
+    visualizar_horarios()  # Atualiza a visualização de horários
+
+# Função para visualizar horários
+def visualizar_horarios():
+    conn = abrir_conexao()
+    cursor = conn.cursor()
+
+    # Obter dados de horários com informações de professores e turmas
+    cursor.execute('''SELECT h.id, p.nome, h.dia_semana, h.horario, d.nome AS disciplina, t.serie 
+                      FROM horarios h 
+                      JOIN professores p ON h.id_professor = p.id 
+                      JOIN disciplinas d ON d.id_professor = p.id 
+                      JOIN turmas t ON d.id_turma = t.id''')
+
+    horarios = cursor.fetchall()
+    fechar_conexao(conn)
+
+    janela_horarios = tk.Toplevel()
+    janela_horarios.title("Horários dos Professores")
+
+    tabela = ttk.Treeview(janela_horarios, columns=("ID", "Professor", "Dia", "Horário", "Disciplina", "Turma"), show='headings')
+    tabela.heading("ID", text="ID")
+    tabela.heading("Professor", text="Professor")
+    tabela.heading("Dia", text="Dia da Semana")
+    tabela.heading("Horário", text="Horário")
+    tabela.heading("Disciplina", text="Disciplina")
+    tabela.heading("Turma", text="Turma")
+
+    # Cores para cada professor (adicione mais se necessário)
+    cores_professores = {
+        1: "#FFCCCC",  # Professor 1 - Rosa claro
+        2: "#CCFFCC",  # Professor 2 - Verde claro
+        3: "#CCCCFF",  # Professor 3 - Azul claro
+        4: "#FFFFCC",  # Professor 4 - Amarelo claro
+        5: "#FFCCFF",  # Professor 5 - Lilás
+        # Adicione mais cores conforme necessário
+    }
+
+    # Preenchendo a tabela
+    for horario in horarios:
+        id_professor = horario[0]
+        # Adiciona a linha com a cor correspondente ao professor
+        tabela.insert("", "end", values=(horario[0], horario[1], horario[2], horario[3], horario[4], horario[5]), tags=(id_professor,))
+    
+    # Configurar as cores para as tags
+    for id_professor, cor in cores_professores.items():
+        tabela.tag_configure(id_professor, background=cor)
+
+    tabela.pack(fill="both", expand=True)
+
+    # Botão de atualizar
+    tk.Button(janela_horarios, text="Atualizar", command=visualizar_horarios).pack()
+
+# ==================== INTERFACE DE EXCLUSÃO DE PROFESSORES ====================
+
+# Função para excluir professores
+def excluir_professor_interface():
+    janela_excluir = tk.Toplevel()
+    janela_excluir.title("Excluir Professor")
+
+    tk.Label(janela_excluir, text="Selecionar Professor").pack()
+    professores = obter_dados("professores")
+    combo_professores = ttk.Combobox(janela_excluir, values=[f"{prof[1]} (ID {prof[0]})" for prof in professores])
+    combo_professores.pack()
+
+    tk.Button(janela_excluir, text="Excluir", command=lambda: confirmar_exclusao(combo_professores.get())).pack()
+
+def confirmar_exclusao(professor):
+    id_professor = int(professor.split("ID ")[-1][:-1])
+    excluir_professor(id_professor)
+
+# Função para visualizar dados de professores e turmas
+def visualizar_dados(tabela):
+    dados = obter_dados(tabela)
+
+    janela_dados = tk.Toplevel()
+    janela_dados.title(f"Dados de {tabela.capitalize()}")
+
+    tabela_dados = ttk.Treeview(janela_dados, columns=("ID", "Nome" if tabela == "professores" else "Série" if tabela == "turmas" else "Nome da Disciplina"), show='headings')
+    tabela_dados.heading("ID", text="ID")
+    tabela_dados.heading("Nome" if tabela == "professores" else "Série" if tabela == "turmas" else "Nome da Disciplina", text="Nome" if tabela == "professores" else "Série" if tabela == "turmas" else "Nome da Disciplina")
+
+    for dado in dados:
+        tabela_dados.insert("", "end", values=dado)
+
+    tabela_dados.pack(fill="both", expand=True)
+
+# ==================== MENU PRINCIPAL ====================
+
+# Função principal
+def main():
+    criar_banco()
+
+    root = tk.Tk()
+    root.title("Gerenciamento Escolar")
+
+    menu = Menu(root)
+    root.config(menu=menu)
+
+    # Menu Professores
+    menu_professores = Menu(menu)
+    menu.add_cascade(label="Professores", menu=menu_professores)
+    menu_professores.add_command(label="Adicionar", command=lambda: adicionar_dados("professores", ["nome", "aulas_por_dia", "aulas_por_semana"], [simpledialog.askstring("Nome do Professor", "Digite o nome do professor:"), simpledialog.askinteger("Aulas por dia", "Digite o número de aulas por dia:"), simpledialog.askinteger("Aulas por semana", "Digite o número de aulas por semana:")]))
+    menu_professores.add_command(label="Excluir", command=excluir_professor_interface)
+    menu_professores.add_command(label="Visualizar", command=lambda: visualizar_dados("professores"))
+
+    # Menu Turmas
+    menu_turmas = Menu(menu)
+    menu.add_cascade(label="Turmas", menu=menu_turmas)
+    menu_turmas.add_command(label="Adicionar", command=lambda: adicionar_dados("turmas", ["ano", "serie"], [simpledialog.askinteger("Ano", "Digite o ano:"), simpledialog.askstring("Série", "Digite a série:")]))
+    menu_turmas.add_command(label="Visualizar", command=lambda: visualizar_dados("turmas"))
+
+    # Menu Disciplinas
+    menu_disciplinas = Menu(menu)
+    menu.add_cascade(label="Disciplinas", menu=menu_disciplinas)
+    menu_disciplinas.add_command(label="Adicionar", command=lambda: adicionar_dados("disciplinas", ["nome", "id_professor", "id_turma"], [simpledialog.askstring("Nome da Disciplina", "Digite o nome da disciplina:"), simpledialog.askinteger("ID do Professor", "Digite o ID do professor:"), simpledialog.askinteger("ID da Turma", "Digite o ID da turma:")]))
+    menu_disciplinas.add_command(label="Visualizar", command=lambda: visualizar_dados("disciplinas"))
+
+    # Menu Horários
+    menu_horarios = Menu(menu)
+    menu.add_cascade(label="Horários", menu=menu_horarios)
+    menu_horarios.add_command(label="Adicionar", command=adicionar_horario_interface)
+    menu_horarios.add_command(label="Visualizar", command=visualizar_horarios)
+
+    root.mainloop()
+
+# Iniciar o programa
+if __name__ == "__main__":
+    main()
